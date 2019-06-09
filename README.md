@@ -26,7 +26,7 @@ IN2 is external clock input.
 
 |Menu      | Description                      |
 |----------|----------------------------------|
-| Pattern  | 1-8, programmable sequence pattern select |
+| Pattern  | 1-8, programmable sequence pattern select.<br/>Enter edit mode of each sequence pattern by long press |
 | Clock    | Int / Ext. the clock source. If Ext, the clock source sould be input to IN2.
 | ClkBPM   | 30-300, Internal Clock Source BPM |
 | ReTrig   | On/Off, retrigger mode. If 'On', the trigger signal resets the flash sequence currently in progress and restarts from the beginning|
@@ -34,6 +34,14 @@ IN2 is external clock input.
 |AudioIn   | Mic / Line, input signal select built-in mic or line audio in signal, that will generate trigger.|
 |Save  | Save current settings to EEPROM.|
 |InitAll | Initialize all data to Factory default.|
+
+### Pattern Edit
+|Menu      |  Description                        |
+|----------|-------------------------------------|
+|Each grid of pattern | by click, cycle off / short / medium / long. For 'long', the length specified by duty, half for 'middle' and 1/4 for 'short'.|
+| Step    | 1-16 , sequence length |
+| Duty     | 1-100, 'On' duty of each grid.  If 100 and the grid is 'long', it will light continuously for the length of the grid.<br/>The actual length depends on the “short, medium and long” of each grid.|
+
 
 ### Dir mode
 
