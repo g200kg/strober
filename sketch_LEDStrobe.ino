@@ -1,3 +1,10 @@
+/*
+ *   g200kg Strober
+ * 
+ * LED lights sequencer
+ *    g200kg 2019/06/11
+ */
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <EEPROM.h>
@@ -8,41 +15,54 @@
 #include <avr/io.h> 
 #include <avr/interrupt.h>
 
-U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_DEV_0 | U8G_I2C_OPT_NO_ACK | U8G_I2C_OPT_FAST); // Fast I2C / TWI
-
-
+// Arduino Nano Pins
 #define ENCA  2
 #define ENCB  3
 #define ENCBTN 4
-
 #define LEDA  17
 #define LEDB  5
-
 #define IN1   6
 #define IN2   8
 #define IN3   7
 #define IN4   9
-
 #define OUT1  13
 #define OUT2  12
 #define OUT3  11
 #define OUT4  10
-
 #define LINEIN 0
 #define MICIN  1
 #define PARAMIN 2
 
+
+
 #define ISR_INTERVAL 8
 #define MAX_PATTERN 8
-#define PROG_ID (((long)'S'<<24)|((long)'t'<<16)|((long)'r'<<8)|'1')
 
+// PROG_ID for EEPROM
+#define PROG_ID1 ('S')
+#define PROG_ID2 ('t')
+#define PROG_ID3 ('b')
+#define PROG_ID4 ('1')
+#define PROG_ID ((long)PROG_ID1 | ((long)PROG_ID2<<8) | ((long)PROG_ID3<<16) | ((long)PROG_ID4<<24))
+
+
+// for Debug
+#define SERIALENABLE 0
+#if SERIALENABLE==1
+  #define SERIALBEGIN(x) Serial.begin(x)
+  #define SERIALWRITE(...)  {char _str_[16]; sprintf(_str_, __VA_ARGS__); Serial.write(_str_);}
+#else
+  #define SERIALBEGIN(x)
+  #define SERIALWRITE(...)
+#endif
+
+// Globals
 void saveEep();
 void initAll();
 
-
 typedef struct {
-  int duty;
-  int step;
+  volatile int duty;
+  volatile int step;
   char patternTab[16];
 } Pattern;
 
@@ -61,7 +81,7 @@ typedef struct {
 } SetupData;
 
 const unsigned char setupFactory[] PROGMEM ={
-  'S', 't', 'r', '1',
+  PROG_ID1, PROG_ID2, PROG_ID3, PROG_ID4,
   50,  0,  8, 0, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0xff, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   50,  0,  8, 0, 0x0f, 0x00, 0xf0, 0x00, 0x0f, 0x00, 0xf0, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
   50,  0,  8, 0, 0x03, 0x0c, 0x30, 0xc0, 0xc0, 0x30, 0x0c, 0x03, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -71,12 +91,12 @@ const unsigned char setupFactory[] PROGMEM ={
   50,  0, 16, 0, 0xff, 0x00, 0xf0, 0x0f, 0x00, 0xcc, 0x33, 0x00, 0xf0, 0x00, 0x0f, 0xf0, 0x00, 0x33, 0xcc, 0x00,
   90,  0, 16, 0, 0x0f, 0x03, 0x3f, 0xcc, 0x33, 0x0c, 0x0c, 0x03, 0xf0, 0xc0, 0xfc, 0x33, 0x30, 0xc0, 0xf0, 0x00,
   0, 0,     //mode
-  0, 0,     //pat
+  2, 0,     //pat
   120, 0,   //bpm
   0, 0,     //audioin
   0, 0,     //retrig
   0, 0,     //clock
-  64, 0,    //autotrig
+  10, 0,    //autotrig
   5, 0,     //speed
   0, 0,     //assign
 };
@@ -92,16 +112,24 @@ int dutyCount1 =0;
 int dutyCount2 =0;
 int dutyCount3 =0;
 int dutyCount4 =0;
-
 int autoTrigCount = 1;
-
 int currentPat;
 int audioVol;
-
 int ledVal=0;
 int isrCount=0;
 volatile int clockInterval=1;
 int btnCount=0;
+int cur_MENU = 0;
+int cur_SAVE = 0;
+int cur_INIT = 0;
+int cur_dummy = 0;
+int currentPage = 0;
+int patOffset = 0;
+int editCur = 0;
+
+// u8g library setup
+U8GLIB_SSD1306_128X64 u8g(U8G_I2C_OPT_DEV_0 | U8G_I2C_OPT_NO_ACK | U8G_I2C_OPT_FAST); // Fast I2C / TWI
+
 
 class MenuData {
 public:
@@ -111,74 +139,66 @@ public:
   int minVal;
   int maxVal;
   char offset;
-  char p1;
+  char next;
   volatile int* val;
 };
 
-int cur_MENU = 0;
-int cur_SAVE = 0;
-int cur_INIT = 0;
-int cur_dummy = 0;
 #define M_EDITSTEP 7
 #define M_EDITDUTY 8
 
 MenuData menuData[] = {
-/* typ  ena   title                minVal maxVal offset   p1  val*/
-  {'S', 7, (char*)"MENU",             0,     0,     0,    0, &cur_MENU,          }, //0
-  {'S', 7, (char*)" Mode",            0,     0,     0,    0, &setupData.mode,    },
-  {'C', 7, (char*)"  Pat",            0,     0,     0,    0, 0,                  },
-  {'C', 7, (char*)"  Dir",            0,     0,     0,    0, 0,                  },
-  {'C', 7, (char*)"  Lev",            0,     0,     0,    0, 0,                  },
-  {'P', 1, (char*)" Pattern",         0,     0,     0,    0, &setupData.pat,     }, //5
-  {'E', 1, (char*)"  Edit",           0,     0,     0,    0, 0,                  },
-  {'V', 1, (char*)"  EditStep",       1,    16,     0,    6, 0,                  },
-  {'V', 1, (char*)"  EditDuty",       1,   100,     0,    6, 0,                  },
-  {'S', 5, (char*)" Clock",           0,     0,     0,    0, &setupData.clock,   },
-  {'C', 5, (char*)"  Int",            0,     0,     0,    0, 0,                  }, //10
-  {'C', 5, (char*)"  Ext",            0,     0,     0,    0, 0,                  },
-  {'V', 1, (char*)" ClkBPM",         30,   300,     0,    0, &setupData.flashBpm,},
-  {'S', 1, (char*)" ReTrig",          0,     0,     0,    0, &setupData.reTrig,  },
-  {'C', 1, (char*)"  Off",            0,     0,     0,    0, 0,                  },
-  {'C', 1, (char*)"  On",             0,     0,     0,    0, 0,                  }, //15
-  {'V', 1, (char*)" AutoTrig",        0,   100,     0,    0, &setupData.autoTrig,},
-  {'S', 5, (char*)" AudioIn",         0,     0,     0,    0, &setupData.audioIn, },
-  {'C', 5, (char*)"  Mic",            0,     0,     0,    0, 0,                  },
-  {'C', 5, (char*)"  Lin",            0,     0,     0,    0, 0,                  },
-  {'V', 4, (char*)" Speed",           1,    20,     0,    0, &setupData.speed,   }, //20
-  {'S', 2, (char*)" Assign",          0,     0,     0,    0, &setupData.assign,  },
-  {'C', 2, (char*)"  4:4",            0,     0,     0,    0, 0,                  },
-  {'C', 2, (char*)"  2:4",            0,     0,     0,    0, 0,                  },
-  {'C', 2, (char*)"  1:4",            0,     0,     0,    0, 0,                  },
-  {'s', 7, (char*)" Save",            0,     0,     0,    0, &cur_SAVE,          }, //25
-  {'C', 7, (char*)"  OK",             0,     0,     0,   27, (int*)saveEep       },
-  {'s', 7, (char*)"   Save Complete", 0,     0,     0,    0, &cur_dummy          },
-  {'C', 7, (char*)"    OK",           0,     0,     0,    0, 0,                  },
-  {'C', 7, (char*)"  Cancel",         0,     0,     0,    0, 0,                  },
-  {'s', 7, (char*)" InitAll",         0,     0,     0,    0, &cur_INIT           }, //30
-  {'C', 7, (char*)"  OK",             0,     0,     0,   32, (int*)initAll       },
-  {'s', 7, (char*)"   Init Complate", 0,     0,     0,    0, &cur_dummy          },
-  {'C', 7, (char*)"    OK",           0,     0,     0,    0, 0,                  },
-  {'C', 7, (char*)"  Cancel",         0,     0,     0,    0, 0,                  },
+/* typ  ena   title                minVal maxVal offset  next  val*/
+  {'S', 7, (char*)"MENU",             0,     0,     0,    0,  &cur_MENU,          }, //0
+  {'S', 7, (char*)" Mode",            0,     0,     0,    0,  &setupData.mode,    },
+  {'C', 7, (char*)"  Pat",            0,     0,     0,    0,  0,                  },
+  {'C', 7, (char*)"  Dir",            0,     0,     0,    0,  0,                  },
+  {'C', 7, (char*)"  Lev",            0,     0,     0,    0,  0,                  },
+  {'P', 1, (char*)" Pattern",         0,     7,     0,    0,  &setupData.pat,     }, //5
+  {'E', 1, (char*)"  Edit",           0,     0,     0,    0,  &editCur,           },
+  {'V', 1, (char*)"   EditStep",      1,    16,     0,    6,  0,                  },
+  {'V', 1, (char*)"   EditDuty",      1,   100,     0,    6,  0,                  },
+  {'S', 1, (char*)" Clock",           0,     0,     0,    0,  &setupData.clock,   },
+  {'C', 1, (char*)"  Int",            0,     0,     0,    0,  0,                  }, //10
+  {'C', 1, (char*)"  Ext",            0,     0,     0,    0,  0,                  },
+  {'V', 1, (char*)" ClkBPM",         30,   300,     0,    0,  &setupData.flashBpm,},
+  {'S', 1, (char*)" ReTrig",          0,     0,     0,    0,  &setupData.reTrig,  },
+  {'C', 1, (char*)"  Off",            0,     0,     0,    0,  0,                  },
+  {'C', 1, (char*)"  On",             0,     0,     0,    0,  0,                  }, //15
+  {'V', 1, (char*)" AutoTrig",        0,   100,     0,    0,  &setupData.autoTrig,},
+  {'S', 5, (char*)" AudioIn",         0,     0,     0,    0,  &setupData.audioIn, },
+  {'C', 5, (char*)"  Mic",            0,     0,     0,    0,  0,                  },
+  {'C', 5, (char*)"  Lin",            0,     0,     0,    0,  0,                  },
+  {'V', 4, (char*)" Speed",           1,    20,     0,    0,  &setupData.speed,   }, //20
+  {'S', 2, (char*)" Assign",          0,     0,     0,    0,  &setupData.assign,  },
+  {'C', 2, (char*)"  4:4",            0,     0,     0,    0,  0,                  },
+  {'C', 2, (char*)"  2:4",            0,     0,     0,    0,  0,                  },
+  {'C', 2, (char*)"  1:4",            0,     0,     0,    0,  0,                  },
+  {'s', 7, (char*)" Save",            0,     0,     0,    0,  &cur_SAVE,          }, //25
+  {'C', 7, (char*)"  OK",             0,     0,     0,   27,  (int*)saveEep       },
+  {'s', 7, (char*)"   Save Complete", 0,     0,     0,    0,  &cur_dummy          },
+  {'C', 7, (char*)"    OK",           0,     0,     0,    0,  0,                  },
+  {'C', 7, (char*)"  Cancel",         0,     0,     0,    0,  0,                  },
+  {'s', 7, (char*)" InitAll",         0,     0,     0,    0,  &cur_INIT           }, //30
+  {'C', 7, (char*)"  OK",             0,     0,     0,   32,  (int*)initAll       },
+  {'s', 7, (char*)"   Init Complate", 0,     0,     0,    0,  &cur_dummy          },
+  {'C', 7, (char*)"    OK",           0,     0,     0,    0,  0,                  },
+  {'C', 7, (char*)"  Cancel",         0,     0,     0,    0,  0,                  },
 };
 
 #define menuMax (sizeof(menuData)/sizeof(MenuData))
-
-int currentPage = 0;
-int patOffset = 0;
-int editCur = 0;
 
 int GetIndent(int n){
   if(n >= menuMax)
     return 0;
   char* p = menuData[n].title;
   int i = 0;
-  while(*p && *p<=' ')
+  while(*p && *p <= ' ')
     ++i,++p;
   return i;
 }
 char* GetStr(int n){
   char*p = menuData[n].title;
-  while(*p==' ')
+  while(*p == ' ')
     ++p;
   return p;
 }
@@ -208,16 +228,16 @@ int GetSubIndex(int p, int v){
   return i;
 }
 void DispMenu(){
-  switch(menuData[currentPage].type){
+  int i, idx, y;
+  char s[16];
+  MenuData* p = &menuData[currentPage];
+  int offset = p->offset;
+  int v = *p->val;
+  switch(p->type){
   case 's':
   case 'S': {
       u8g.firstPage();
       do {
-        int i, idx, y;
-        char s[8];
-        MenuData* p = &menuData[currentPage];
-        int v = *p->val;
-        int offset = p->offset;
         u8g.drawStr(0,15, GetStr(currentPage));
         for(i = 0; (idx = GetSubIndex(currentPage, i)) >= 0; ++i){
           MenuData* q = &menuData[idx];
@@ -248,11 +268,9 @@ void DispMenu(){
     }
     break;
   case 'V':{
-      char s[16];
       u8g.firstPage();
-      MenuData* p = &menuData[currentPage];
-      int x = ((*p->val) - p->minVal) * 100 / (p->maxVal - p->minVal + 1);
-      sprintf(s, "%d", *p->val);
+      int x = (v - p->minVal) * 100 / (p->maxVal - p->minVal + 1);
+      sprintf(s, "%d", v);
       do {
         u8g.drawStr(0,15, GetStr(currentPage));
         u8g.drawStr(16,33, s);
@@ -271,8 +289,8 @@ void DispMenu(){
         int i;
         u8g.drawStr(0,15, "PATTERN");
         for(i=0;i<3;++i){
-          char s[2]={0,0};
           s[0] = 0x31 + i + patOffset;
+          s[1] = 0;
           u8g.drawStr(16,31 + i * 16, s);
           u8g.drawBox(32,18 + i * 16,96,1);
           Pattern* p = &setupData.pattern[i + patOffset];
@@ -296,7 +314,6 @@ void DispMenu(){
       do {
         int x,y,b,yoffs;
         Pattern* p = &setupData.pattern[setupData.pat];
-        char s[16];
         sprintf(s, "PATTERN %d",setupData.pat+1);
         u8g.drawStr(0, 15, s);
         if(editCur>=64){
@@ -356,38 +373,29 @@ void DispMenu(){
 }
 void NextMenu(){
   MenuData* p = &menuData[currentPage];
-  int v;
+  int v = *p->val;
   switch(p->type){
   case 's':
   case 'S': {
-      v = *p->val + 1;
-      int idx = GetSubIndex(currentPage, v);
-      if(idx < 0)
-        v = v - 1;
-      if(v >= p->offset + 3)
-        p->offset = v - 2;
-      *p->val = v;
+      if(GetSubIndex(currentPage, v + 1) >= 0){
+        if(v >= p->offset + 2)
+          p->offset = v - 1;
+        *p->val = v + 1;
+      }
     }
     break;
-  case 'V': {
-      v = *p->val + 1;
-      if(v > p->maxVal)
-        v = p->maxVal;
-      *p->val = v;
-    }
+  case 'V':
+  case 'P':
+    v = v + 1;
+    if(v > p->maxVal)
+      v = p->maxVal;
+    *p->val = v;
     break;
-  case 'P': {
-      if(++setupData.pat >= MAX_PATTERN)
-        setupData.pat = MAX_PATTERN - 1;
-    }
-    break;
-  case 'E': {
-      ++editCur;
-      if(editCur>65)
-        editCur=0;
-      if(editCur<64 && (editCur & 0xf)>=setupData.pattern[setupData.pat].step)
-        editCur = (editCur&0x30)+16;
-    }
+  case 'E':
+    if(++editCur > 65)
+      editCur = 0;
+    if(editCur < 64 && (editCur & 0xf) >= setupData.pattern[setupData.pat].step)
+      editCur = (editCur&0x30)+16;
   }
 }
 void PrevMenu(){
@@ -404,63 +412,57 @@ void PrevMenu(){
     *p->val = v;
     break;
   case 'V':
+  case 'P':
     v = *p->val - 1;
     if(v < p->minVal)
       v = p->minVal;
     *p->val = v;
     break;
-  case 'P':
-    if(--setupData.pat < 0)
-      setupData.pat = 0;
-    break;
   case 'E':
-    --editCur;
-    if(editCur < 0)
+    if(--editCur < 0)
       editCur = 65;
-    if(editCur < 64 && (editCur & 0xf)>=setupData.pattern[setupData.pat].step)
-      editCur = ((editCur&0x30)+setupData.pattern[setupData.pat].step-1)&63;
+    int step = setupData.pattern[setupData.pat].step;
+    if(editCur < 64 && (editCur & 0xf)>= step)
+      editCur = ((editCur&0x30) + step - 1)&63;
   }
 }
 void PressMenu(){
   MenuData* p = &menuData[currentPage];
   switch(p->type){
   case 's':
-  case 'S': {
+  case 'S':{
       int v = *(p->val);
       int idx = GetSubIndex(currentPage, v);
       if(menuData[idx].type =='C'){
         void* ptr = (void*)menuData[idx].val;
         if(ptr)
           ((void (*)())ptr)();
-        currentPage = menuData[idx].p1;
+        currentPage = menuData[idx].next;
       }
       else
         currentPage = idx;
     }
     break;
-  case 'C': {
-      currentPage = p->p1;
-    }
+  case 'C':
+    currentPage = p->next;
     break;
-  case 'V': {
-      currentPage = p->p1;
-    }
+  case 'V':
+    currentPage = p->next;
     break;
-  case 'P': {
-      currentPage = p->p1;
-    }
+  case 'P':
+    currentPage = p->next;
     break;
-  case 'E': {
-      switch(editCur){
-      case 64:
-        menuData[M_EDITSTEP].val = &setupData.pattern[setupData.pat].step;
-        currentPage = M_EDITSTEP;
-        break;
-      case 65:
-        menuData[M_EDITDUTY].val = &setupData.pattern[setupData.pat].duty;
-        currentPage = M_EDITDUTY;
-        break;
-      default:
+  case 'E':
+    switch(editCur){
+    case 64:
+      menuData[M_EDITSTEP].val = &setupData.pattern[setupData.pat].step;
+      currentPage = M_EDITSTEP;
+      break;
+    case 65:
+      menuData[M_EDITDUTY].val = &setupData.pattern[setupData.pat].duty;
+      currentPage = M_EDITDUTY;
+      break;
+    default:{
         int x = editCur&0xf;
         int y = editCur>>4;
         int b = 0x3<<(y<<1);
@@ -474,22 +476,17 @@ void PressMenu(){
 void LongPressMenu(){
   MenuData* p = &menuData[currentPage];
   switch(p->type){
-  case 'P': {
-      ++currentPage;
-    }
+  case 'P':
+    ++currentPage;
     break;
-  case 'E': {
-      --currentPage;  
-    }
+  case 'E':
+    --currentPage;  
     break;
   }
 }
 int loadEep(){
   unsigned long id;
-  EEPROM.get(0, id);
-  char s[32];
-  sprintf(s, "%x %x %x %x\n",EEPROM.read(0), EEPROM.read(1), EEPROM.read(2), EEPROM.read(3));
-//  Serial.write(s);
+  SERIALWRITE("%x %x %x %x\n", EEPROM.read(0), EEPROM.read(1), EEPROM.read(2), EEPROM.read(3));
   if(id != PROG_ID)
     return 0;
   EEPROM.get(0, setupData);
@@ -497,7 +494,7 @@ int loadEep(){
 }
 
 void saveEep(){
-//  Serial.write("saveEep\n");
+  SERIALWRITE("saveEep\n");
   EEPROM.put(0, setupData);
 }
 void initAll(){
@@ -563,14 +560,6 @@ void ISRPatClock(){
   writeLED(ledVal);
 }
 void ISRPat(){
-/*  if (--autoTrigCount < 0) {
-    if(setupData.autoTrig)
-      autoTrigCount = 60000 / setupData.autoTrig / ISR_INTERVAL;
-  }
-  if (setupData.autoTrig > 0 && autoTrigCount == 0)
-    trig();
-*/
-
   if(setupData.clock == 1)
     flashCountMax = clockInterval;
   else
@@ -685,12 +674,7 @@ void checkBtn() {
 
 void ISREnc(int s) {
   static int phase = 0;
-//  char str[8];
-//  sprintf(str,"%x %d\n",s,phase);
-//  Serial.write(str);
-  if((s&0x10)==0){
-    
-  }
+  SERIALWRITE("%x\n", s);
   switch(s&0xc){
   case 0x0:{
       switch(phase){
@@ -740,9 +724,6 @@ ISR(PCINT0_vect){
   static int in_old=1;
   int in = PINB&1;
   if(in==1 && in_old==0) {
-//    char str[8];
-//    sprintf(str,"%d\n",isrCount);
-//    Serial.write(str);
     clockInterval = isrCount;
     isrCount = 0;
     if(setupData.mode==0 && setupData.clock==1)
@@ -783,18 +764,18 @@ void setup() {
   PCINTSetup();
   Wire.begin();
   
-//  Serial.begin (9600);
+  SERIALBEGIN(9600);
 
-  u8g.setFont(u8g_font_unifont);
+  u8g.begin();
+  u8g.setFont(u8g_font_7x14);
   u8g.setColorIndex(1);
 
-//  setupData = setupDefault;
   memcpy_P(&setupData, &setupFactory, sizeof(setupData)) ;
   loadEep();
   MsTimer2::set(ISR_INTERVAL, isrTimer);
   MsTimer2::start();
 
-//  Serial.write("Setup complete\n");
+  SERIALWRITE("Setup complete\n");
 
 }
 void loop() {
