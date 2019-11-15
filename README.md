@@ -12,7 +12,7 @@ Strober, the programmable LED flasher hardware design
 * Programmable flashing control
 * Controlled with Arduino Nano
 
-GitHub repository : [https://github.com/g200kg/strober](https://github.com/g200kg/strober)
+GitHub repository : [https://github.com/g200kg/strober](https://github.com/g200kg/strober)  
 Fontpage : [https://g200kg.github.io/strober](https://g200kg.github.io/strober)
 
 ## Files
