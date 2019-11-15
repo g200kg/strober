@@ -1,8 +1,8 @@
+![](images/g200kg160x80.png)
 # Strober
 Strober, the programmable LED flasher hardware design
 
-
-Strober is a hardware design for LED flasher.
+![Strober.jpg](images/Strober.jpg)
 
 ## Overview
 
@@ -11,6 +11,16 @@ Strober is a hardware design for LED flasher.
 * Require +12V Power supply and 12V LED lights
 * Programmable flashing control
 * Controlled with Arduino Nano
+
+GitHub repository : [https://github.com/g200kg/strober](https://github.com/g200kg/strober)
+
+## Files
+
+| File                                             | Description               |
+|--------------------------------------------------|---------------------------|
+|[StroberManual.pdf](docs/StroberManual.pdf)       | Manual (Japanese/English) |
+|[StroberSchematic.pdf](docs/StroberSchematic.pdf) | Schematic                 |
+|[sketch_Strober.ino](docs/sketch_Strober.ino)     | Source Code (Arduino)     |
 
 ## Software Overview
 
@@ -38,9 +48,9 @@ IN2 is external clock input.
 ### Pattern Edit
 |Menu      |  Description                        |
 |----------|-------------------------------------|
-|Each grid of pattern | by click, cycle off / short / medium / long. For 'long', the length specified by duty, half for 'middle' and 1/4 for 'short'.|
-| Step    | 1-16 , sequence length |
-| Duty     | 1-100, 'On' duty of each grid.  If 100 and the grid is 'long', it will light continuously for the length of the grid.<br/>The actual length depends on the “short, medium and long” of each grid.|
+| Each grid of pattern | by click, cycle off / short / medium / long. For 'long', the length specified by duty, half for 'middle' and 1/4 for 'short'. |
+| Step     | 1-16 , sequence length |
+| Duty     | 1-100, 'On' duty of each grid.  If 100 and the grid is 'long', it will light continuously for the length of the grid.<br/> The actual length depends on the "short, medium and long" of each grid.|
 
 
 ### Dir mode
@@ -82,3 +92,5 @@ In this mode, OUT1 to OUT4 are lighted sequentially depending on the signal leve
 |   BTN    |   D4   |
 
 
+## License
+Released under MIT license.
